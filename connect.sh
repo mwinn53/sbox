@@ -1,39 +1,74 @@
 #!/bin/bash
 clear
 set +H
+
+# Set Defaults
 BACKTITLE="sbox Setup"
 VPNIP="174.63.244.248"
-DEFSSID="Navy_MWR_WiFi"
+EXTIF=""
+INTIF=""
+SSID=""
+KEY=""
+PW=""
+QUIET=0
+# [TODO] Build a description header
+# usage() { echo "Usage: $0 -e <wlan\*|eth0> -i <wlan\*|eth0> -s <SSID> -k <KEY> -q" 1>&2; exit 1; }
+
+# Parse arguments
+while getopts qe:i:s:k: option
+do
+	case ${option}
+	in
+		e) EXTIF=$OPTARG;;	# external interface (i.e., wlan0, eth0, etc.)
+		i) INTIF=$OPTARG;;	# internal interface (i.e., wlan0, eth0, etc.)
+		s) SSID=$OPTARG;;	# WIFI SSID
+		k) KEY=$OPTARG;;	# WIFI Key (if encrypted)
+		q) QUIET=1;;		# Disables connectivity checks
+		p) PW=$OPTARG;;		# VPN Password
+		:) echo "$OPTARG requires an argument."	# If expected argument omitted.
+		usage;;
+		*) usage;; 						# If no options are matched.
+	esac
+done
 
 # Close any existing OPENVPN connections
-sudo pkill -SIGTERM -f 'openvpn'
-echo "Waiting 5 seconds for existing VPN to terminate..."
-sleep 5
-clear
+RESPONSE=ps -a | grep openvpn
+if [ $RESPONSE == 0 ]; then
+	sudo pkill -SIGTERM -f 'openvpn'
+	echo "Waiting 5 seconds for existing VPN to terminate..."
+	sleep 5
+	clear
+fi
 
 # List the available interfaces and ask the user to choose the internal (private) and external (public) interfaces
-TITLE="Step 1 of 4: Interface Setup"
-VALUE=" " 
-for i in $(ls /sys/class/net | grep -vi "lo"); do ((item++)); VALUE="$VALUE ${i} up" ; done
-EXTIF=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the external network interface.\\n\\n*** NOTE: This is usually a WLAN interface. ***" 20 60 10 ${VALUE} 3>&1 1>&2 2>&3)
-RESPONSE=$?
-if [ $RESPONSE != 0 ]; then
-        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
-        exit 1
+if [ $EXTIF == "" ]; then
+	TITLE="Step 1 of 4: Interface Setup"
+	VALUE=" " 
+	for i in $(ls /sys/class/net | grep -vi "lo"); do ((item++)); VALUE="$VALUE ${i} up" ; done
+	EXTIF=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the external network interface.\\n\\n*** NOTE: This is usually a WLAN interface. ***" 20 60 10 ${VALUE} 3>&1 1>&2 2>&3)
+	RESPONSE=$?
+	if [ $RESPONSE != 0 ]; then
+       		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+	        exit 1
+	fi
 fi
 
-value=" " 
-for i in $(ls /sys/class/net | grep -viE "lo|$EXTIF"); do ((item++)); value="$value ${i}" ; done
-INTIF=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the internal network interface.\\n\\n*** NOTE: This is usually an ETH interface. ***" 20 60 10 ${VALUE} 3>&1 1>&2 2>&3)
-RESPONSE=$?
-if [ $RESPONSE != 0 ]; then
-        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
-        exit 1
+if [ $INTIF == "" ]; then
+	VALUE=" " 
+	for i in $(ls /sys/class/net | grep -viE "lo|$EXTIF"); do ((item++)); VALUE="$VALUE ${i}" ; done
+	INTIF=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the internal network interface.\\n\\n*** NOTE: This is usually an ETH interface. ***" 20 60 10 ${VALUE} 3>&1 1>&2 2>&3)
+	RESPONSE=$?
+	if [ $RESPONSE != 0 ]; then
+        	whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+	        exit 1
+	fi
 fi
 
-if ! (whiptail --backtitle "$BACKTITLE" --title "$TITLE" --yesno "Interface selection complete.\\n*** NOTE: Incorrect configuration could result in a DOS condition! ***\\nIf DOS occurs, unplug, reboot, and try again.\\n\\nExternal:   $EXTIF\\nInternal:   $INTIF\\n\\nRotating MAC address and configuring firewall..." 20 78) then
-	whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
-        exit 1
+if [ $QUIET == 0 ]; then 
+	if ! (whiptail --backtitle "$BACKTITLE" --title "$TITLE" --yesno "Interface selection complete.\\n*** NOTE: Incorrect configuration could result in a DOS condition! ***\\nIf DOS occurs, unplug, reboot, and try again.\\n\\nExternal:   $EXTIF\\nInternal:   $INTIF\\n\\nRotating MAC address and configuring firewall..." 20 78) then
+		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+	        exit 1
+	fi
 fi
 
 # [TODO] cycle the MAC address on the external interface
@@ -95,72 +130,87 @@ sudo iptables -P OUTPUT DROP
 
 echo "Done Configuring IPTables (waiting 5 seconds for interfaces)..."
 sleep 5
+
 # If the external interface is WIFI (i.e., WLANx), join the WLAN
-
-
+if [[ $EXTIF == wlan* ]]; then
 TITLE="Step 2 of 4: Join External Interface to Public Network"
+	if [ $SSID == "" ]; then
+		echo ""
+		echo "Scanning for SSID..."
 
-echo ""
-echo "Scanning for SSID..."
+		## scan for SSID and select
+		VALUE=$(sudo iwlist $EXTIF scan | egrep "Encryption|ESSID" | sed -e "s/\"\"/<hidden>/" -e "s/ \{1,\}//" -e "s/ESSID://" -e "s/Encryption key://" -e "s/\"//g" | awk '{ORS = (NR % 2 == 0)? "\n" : " "; print}' | awk '{s=$1;$1=$NF;$NF=s}1' | sort)
 
-## scan for SSID and select
-VALUE=$(sudo iwlist $EXTIF scan | egrep "Encryption|ESSID" | sed -e "s/\"\"/<hidden>/" -e "s/ \{1,\}//" -e "s/ESSID://" -e "s/Encryption key://" -e "s/\"//g" | awk '{ORS = (NR % 2 == 0)? "\n" : " "; print}' | awk '{s=$1;$1=$NF;$NF=s}1' | sort)
+		# echo "Parsing SSIDs..."
+		# echo "($VALUE)"
 
-# echo "Parsing SSIDs..."
-# echo "($VALUE)"
+		SSID=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the External WIFI Network." 20 60 10 $VALUE 3>&1 1>&2 2>&3)
+		exitstatus=$?
 
-SSID=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the External WIFI Network." 20 60 10 $VALUE 3>&1 1>&2 2>&3)
-exitstatus=$?
+		# echo "Exit Status was....$exitstatus"
+		# echo "Processing Choices..."
+		# echo "($SSID)"
 
-# echo "Exit Status was....$exitstatus"
-# echo "Processing Choices..."
-# echo "($SSID)"
+		if [ $exitstatus -eq 255 ]; then 
+	        	SSID=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "There was a problem with the choices. Enter the SSID manually." 8 78 $DEFSSID 3>&1 1>&2 2>&3)
+			exitstatus=$?
+		fi
 
-if [ $exitstatus -eq 255 ]; then 
-        SSID=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "There was a problem with the choices. Enter the SSID manually." 8 78 $DEFSSID 3>&1 1>&2 2>&3)
-	exitstatus=$?
-fi
+		if [ $exitstatus -eq 0 ]; then	# 0 = OK / 1 = CANCEL
 
-if [ $exitstatus -eq 0 ]; then	# 0 = OK / 1 = CANCEL
-
-	# determine if the SSID needs to be manually entered.
-	if [ "$SSID" == "<hidden>" ]; then
-		echo "Enter hidden network"
-        	SSID=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Manually enter the hidden network SSID" 8 78 3>&1 1>&2 2>&3)
+			# determine if the SSID needs to be manually entered.
+			if [ "$SSID" == "<hidden>" ]; then
+				echo "Enter hidden network"
+        			SSID=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Manually enter the hidden network SSID" 8 78 3>&1 1>&2 2>&3)
+			fi
+		else
+			whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "Network SSID selection was cancelled. Setup cannot continue." 12 80
+			exit 1
+		fi
 	fi
 
 	# determine whether a key is required
 	CRYPTO=$(sudo iwlist $EXTIF scan | egrep "Encryption|ESSID" | sed -e "s/ \{1,\}//" -e "s/ESSID://" -e "s/Encryption key://" -e "s/\"//g" | awk '{ORS = (NR % 2 == 0)? "\n" : " "; print}' | awk '{s=$1;$1=$NF;$NF=s}1' | grep $SSID | grep -c on)
 
 	if [ $CRYPTO != 0 ]; then
-		KEY=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Enter the network KEY?" 8 78 3>&1 1>&2 2>&3)
-		exitstatus=$?
-		if [ $exitstatus = 0 ]; then
-			# configure the interface
-			wpa_passphrase $SSID $KEY > net.cfg
-			sudo wpa_supplicant -i$EXTIF -cnet.cfg -B
-			rm -f net.cfg
-		else
-		        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User cancelled network KEY." 12 80
-		        exit 1
+		if [ $KEY == "" ]; then
+			KEY=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Enter the network KEY?" 8 78 3>&1 1>&2 2>&3)
+			exitstatus=$?
+			
+			if [ $exitstatus != 0 ]; then
+				whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User cancelled network KEY." 12 80
+				exit 1
+			fi
 		fi
+		# configure the interface
+		wpa_passphrase $SSID $KEY > net.cfg
+		sudo wpa_supplicant -i$EXTIF -cnet.cfg -B
+		rm -f net.cfg
 	else
 		sudo iwconfig $EXTIF essid $SSID
 	fi
+fi
 
-	# wait for the interface to grab an IP Address
-	for ((i = 0 ; i <= 100 ; i+=5)); do
-		sleep 1
-		if ifconfig $EXTIF | grep 'inet' > /dev/null; then 
-			break
-		fi
-		echo $i
-	done | whiptail --title "$TITLE" --gauge "Waiting (up to 20 seconds) for $SSID on $EXTIF..." 8 85 0
+# wait for the interface to grab an IP Address
+for ((i = 0 ; i <= 100 ; i+=5)); do
+	sleep 1
+	if ifconfig $EXTIF | grep 'inet' > /dev/null; then 
+		break
+	fi
+	echo $i
+done | whiptail --title "$TITLE" --gauge "Waiting (up to 20 seconds) for $SSID on $EXTIF..." 8 85 0
 
-	if [ $i = 100 ]; then
- 		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "$EXTIF is not available. Check the connectivity and try again.\n-The network may be non-responsive.\n-The network KEY may be incorrect." 12 80
+if [ $i = 100 ]; then
+	if [ $QUIET == 0 ]; then 
+		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "$EXTIF is not available. Check the connectivity and try again.\n-The network may be non-responsive.\n-The network KEY may be incorrect." 12 80
 		exit 1
-	else
+	else 
+		echo "$EXTIF is not available. Check the connectivity and try again (the network may be non-responsive, or the network KEY may be incorrect)."
+		exit 1
+	fi
+	
+else
+	if [ $QUIET == 0 ]; then 
 		# open www.google.com to verify connectivity and sign in to the captive portal (if necessary)
 		INET=$(ifconfig $EXTIF | grep 'inet')
 		exitstatus=$?
@@ -178,69 +228,67 @@ if [ $exitstatus -eq 0 ]; then	# 0 = OK / 1 = CANCEL
 			exit 1
 		fi
 	fi
-
-	# ask for the VPN password
-	TITLE="Step 3 of 4: Establish the VPN Tunnel"
+fi
+	
+# ask for the VPN password
+TITLE="Step 3 of 4: Establish the VPN Tunnel"
+if [ $EXTIF == "" ]; then
 	PW=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Enter the VPN certificate password." 8 78 greatpain 3>&1 1>&2 2>&3)
 	exitstatus=$?
-		if [ $exitstatus = 0 ]; then
-	        	# start the VPN Tunnel
-			clear
- 			# perform a port test. If successful
-			echo "Starting the VPN Tunnel (UDP 1194)"
-
-			# [TODO] how to pass the certificate password to openvpn
-			# sudo echo $PW > auth.txt
-			sudo openvpn --config /etc/openvpn/client/remote-udp1194.ovpn --auth-nocache --askpass /etc/openvpn/client/auth.txt &
-			# sudo openvpn --config  /etc/openvpn/client/remote-udp1194.ovpn &
-			# sudo rm auth.txt
-
-		# [TODO] Switch to TCP option if UDP fails.
-			# clear
-                        # echo "Starting the VPN Tunnel (TCP 443)"
-                        # [TODO] how to pass the certificate password to openvpn
-                        # sudo echo $PW > auth.txt
-                        # sudo openvpn --config /etc/openvpn/client/remote-tcp443.ovpn --askpass  /etc/openvpn/client/auth.txt &
-                        # sudo openvpn --config /etc/openvpn/client/remote-tcp443.ovpn &
-                        # sudo rm auth.txt
-
-		# [TODO] Handle an error in which neither connection succeeds.
-
-                else
-                        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User cancelled the VPN Certificate password." 12 80
-                        exit 1
-                fi
-
-	# echo "Launching password agent..."
-	# sudo systemd-tty-ask-password-agent
-
-	echo "Clearing DNS configurations from external interface..."
-	sudo resolvconf -d $EXTIF.dhcp
-
-	echo "Waiting 10 seconds for VPN)..."
-	sleep 10
-
-	echo "Done Configuring Interfaces!"
-
-else
-	MSG="Network SSID selection was cancelled. Setup cannot continue."
-	exit 1
+	
+	if [ $exitstatus != 0 ]; then
+		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User cancelled the VPN Certificate password." 12 80
+		exit 1
+	fi
 fi
+   
+# start the VPN Tunnel
+clear
+# perform a port test. If successful
+echo "Starting the VPN Tunnel (UDP 1194)"
+
+# [TODO] how to pass the certificate password to openvpn
+# sudo echo $PW > auth.txt
+sudo openvpn --config /etc/openvpn/client/remote-udp1194.ovpn --auth-nocache --askpass /etc/openvpn/client/auth.txt &
+# sudo openvpn --config  /etc/openvpn/client/remote-udp1194.ovpn &
+# sudo rm auth.txt
+
+# [TODO] Switch to TCP option if UDP fails.
+# clear
+# echo "Starting the VPN Tunnel (TCP 443)"
+# [TODO] how to pass the certificate password to openvpn
+# sudo echo $PW > auth.txt
+# sudo openvpn --config /etc/openvpn/client/remote-tcp443.ovpn --askpass  /etc/openvpn/client/auth.txt &
+# sudo openvpn --config /etc/openvpn/client/remote-tcp443.ovpn &
+# sudo rm auth.txt
+
+# [TODO] Handle an error in which neither connection succeeds.
+# echo "Launching password agent..."
+# sudo systemd-tty-ask-password-agent
+
+echo "Clearing DNS configurations from external interface..."
+sudo resolvconf -d $EXTIF.dhcp
+
+echo "Waiting 10 seconds for VPN)..."
+sleep 10
+
+echo "Done Configuring Interfaces!"
 
 
 # Establish WLAN if the internal interface is WIFI (i.e., WLANx)
-if [ $INTIF = wlan* ]; then
+for i in $(ls /sys/class/net | grep -viE "lo|$EXTIF|$INTIF"); do ((item++)); VALUE="${i}" ; done
 
-	TITLE="Step 4 of 4: Establish Private Network"
+# if [ ${#VALUE[@]} > 0]; then		# If there is an open WIFI interface
+#	if [[ $VALUE == wlan* ]] ; then
+#		echo "WLAN"
+#	fi
 
-	## Configure a SSID and password
-	SSID=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Create an internal network SSID" 8 78 C137 3>&1 1>&2 2>&3)
-	RND=$(< /dev/urandom tr -dc A-Z-a-z-0-9 | head -c${1:-12};echo;)
-	KEY=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Create a network KEY?" 8 78 $RND 3>&1 1>&2 2>&3)
-
-	## Configure DHCP/DNS for wifi (i.e., from command line)
-
-fi
+#	if [ $QUIET == 0 ]; then	#
+#		
+#	fi
+#
+# 	./apconfig.sh -i $VALUE 
+# fi
 
 ## Provide a summary screen
 # internal interface, IP, mask, gw
