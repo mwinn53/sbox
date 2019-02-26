@@ -12,7 +12,7 @@ KEY=""
 PW=""
 QUIET=0
 # [TODO] Build a description header
-# usage() { echo "Usage: $0 -e <wlan\*|eth0> -i <wlan\*|eth0> -s <SSID> -k <KEY> -q" 1>&2; exit 1; }
+usage() { echo "Usage: $0 -e <wlan\*|eth0> -i <wlan\*|eth0> -s <SSID> -k <KEY> -q" 1>&2; exit 1; }
 
 # Parse arguments
 while getopts qe:i:s:k: option
@@ -32,8 +32,10 @@ do
 done
 
 # Close any existing OPENVPN connections
-RESPONSE=ps -a | grep openvpn
-if [ $RESPONSE == 0 ]; then
+RESPONSE=$(ps -aux | grep [o]penvpn)
+if [ -n ${RESPONSE} ]; then
+	echo "OPENVPN is not running."
+else
 	sudo pkill -SIGTERM -f 'openvpn'
 	echo "Waiting 5 seconds for existing VPN to terminate..."
 	sleep 5
@@ -41,7 +43,7 @@ if [ $RESPONSE == 0 ]; then
 fi
 
 # List the available interfaces and ask the user to choose the internal (private) and external (public) interfaces
-if [ $EXTIF == "" ]; then
+if [ -z $EXTIF ]; then
 	TITLE="Step 1 of 4: Interface Setup"
 	VALUE=" " 
 	for i in $(ls /sys/class/net | grep -vi "lo"); do ((item++)); VALUE="$VALUE ${i} up" ; done
@@ -53,7 +55,7 @@ if [ $EXTIF == "" ]; then
 	fi
 fi
 
-if [ $INTIF == "" ]; then
+if [ -z $INTIF ]; then
 	VALUE=" " 
 	for i in $(ls /sys/class/net | grep -viE "lo|$EXTIF"); do ((item++)); VALUE="$VALUE ${i}" ; done
 	INTIF=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the internal network interface.\\n\\n*** NOTE: This is usually an ETH interface. ***" 20 60 10 ${VALUE} 3>&1 1>&2 2>&3)
@@ -64,7 +66,7 @@ if [ $INTIF == "" ]; then
 	fi
 fi
 
-if [ $QUIET == 0 ]; then 
+if [ -z $QUIET ]; then 
 	if ! (whiptail --backtitle "$BACKTITLE" --title "$TITLE" --yesno "Interface selection complete.\\n*** NOTE: Incorrect configuration could result in a DOS condition! ***\\nIf DOS occurs, unplug, reboot, and try again.\\n\\nExternal:   $EXTIF\\nInternal:   $INTIF\\n\\nRotating MAC address and configuring firewall..." 20 78) then
 		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
 	        exit 1
@@ -134,7 +136,7 @@ sleep 5
 # If the external interface is WIFI (i.e., WLANx), join the WLAN
 if [[ $EXTIF == wlan* ]]; then
 TITLE="Step 2 of 4: Join External Interface to Public Network"
-	if [ $SSID == "" ]; then
+	if [ -z $SSID ]; then
 		echo ""
 		echo "Scanning for SSID..."
 
@@ -173,7 +175,7 @@ TITLE="Step 2 of 4: Join External Interface to Public Network"
 	CRYPTO=$(sudo iwlist $EXTIF scan | egrep "Encryption|ESSID" | sed -e "s/ \{1,\}//" -e "s/ESSID://" -e "s/Encryption key://" -e "s/\"//g" | awk '{ORS = (NR % 2 == 0)? "\n" : " "; print}' | awk '{s=$1;$1=$NF;$NF=s}1' | grep $SSID | grep -c on)
 
 	if [ $CRYPTO != 0 ]; then
-		if [ $KEY == "" ]; then
+		if [ -z $KEY ]; then
 			KEY=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Enter the network KEY?" 8 78 3>&1 1>&2 2>&3)
 			exitstatus=$?
 			
@@ -201,7 +203,7 @@ for ((i = 0 ; i <= 100 ; i+=5)); do
 done | whiptail --title "$TITLE" --gauge "Waiting (up to 20 seconds) for $SSID on $EXTIF..." 8 85 0
 
 if [ $i = 100 ]; then
-	if [ $QUIET == 0 ]; then 
+	if [ -z $QUIET]; then 
 		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "$EXTIF is not available. Check the connectivity and try again.\n-The network may be non-responsive.\n-The network KEY may be incorrect." 12 80
 		exit 1
 	else 
@@ -210,7 +212,7 @@ if [ $i = 100 ]; then
 	fi
 	
 else
-	if [ $QUIET == 0 ]; then 
+	if [ -z $QUIET ]; then 
 		# open www.google.com to verify connectivity and sign in to the captive portal (if necessary)
 		INET=$(ifconfig $EXTIF | grep 'inet')
 		exitstatus=$?
@@ -232,7 +234,7 @@ fi
 	
 # ask for the VPN password
 TITLE="Step 3 of 4: Establish the VPN Tunnel"
-if [ $EXTIF == "" ]; then
+if [ -z $EXTIF ]; then
 	PW=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Enter the VPN certificate password." 8 78 greatpain 3>&1 1>&2 2>&3)
 	exitstatus=$?
 	
