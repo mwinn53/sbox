@@ -1,13 +1,32 @@
 #!/bin/bash
-CONFFILE="/etc/hostapd/hostapd.conf"
+
+usage() { echo "Usage: $0 -i <wlan\*> -f <configfile.conf> -q" 1>&2; exit 1; }
+
+# Parse arguments
+while getopts qe:i:s:k: option
+do
+	case ${option}
+	in
+		i) WINT=$OPTARG;;		# WAP Interface (i.e., wlan0, eth0, etc.)
+		f) CONFFILE=$OPTARG;;	# Configuration File
+		:) echo "$OPTARG requires an argument."	# If expected argument omitted.
+		usage;;
+		*) usage;; 						# If no options are matched.
+	esac
+done
+
+if [ -z $CONFFILE ]; then
+	CONFFILE="/etc/hostapd/hostapd.conf"
+fi
+ 
 clear
-if [[ $# -eq 0 ]];  then
+if [[ -z $WINT ]];  then
 	echo "No interface specified. Setting default to wlan0."
     INT="wlan0"
 
 else
-	if [[ $1 == "wlan"[0-9] ]]; then
-		INT=$1
+	if [[ $WINT == "wlan"[0-1] ]]; then
+		INT=$WINT
 	else
 		echo "Error in interface name ($1). Setting default to wlan0."
 		INT="wlan0"
@@ -46,46 +65,53 @@ else
 	FEXISTS="default"
 fi
 
-BACKTITLE="sbox Wireless Access Point Setup"
-for i in $(ls /sys/class/net | grep -i "wlan"); do ((item++)); INTS="$INTS ${i} up" ; done
+if [ -z $WINT ]; then
 
-INT=$(whiptail --backtitle "$BACKTITLE" --title "Configure an Interface." --menu "Select the interface that hosts the AP.\nThe $FEXISTS $INT is selected." --default-item $INT 15 50 5 $INTS 3>&1 1>&2 2>&3)
-RESPONSE=$?
-if [ $RESPONSE != 0 ]; then
-        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
-        exit 1
-fi
+	BACKTITLE="sbox Wireless Access Point Setup"
+	for i in $(ls /sys/class/net | grep -i "wlan"); do ((item++)); INTS="$INTS ${i} up" ; done
 
-# Need to set the IP Addy on $INT
-MODES="b 802.11b off g 802.11g on n 802.11n off"
-MODE=$(whiptail --backtitle "$BACKTITLE"  --title "Set the WIFI Mode." --radiolist "Choose a mode. The $FEXISTS is $MODE." 12 60 3 $MODES 3>&1 1>&2 2>&3)
-RESPONSE=$?
-if [ $RESPONSE != 0 ]; then
-        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
-        exit 1
-fi
+	## TODO: Check for non-active interfaces ##
+	# for i in $INTS; do
+	#	if [ -z ${ifconfig ${i} | grep inet} ]
+			
+	INT=$(whiptail --backtitle "$BACKTITLE" --title "Configure an Interface." --menu "Select the interface that hosts the AP.\nThe $FEXISTS $INT is selected." --default-item $INT 15 50 5 $INTS 3>&1 1>&2 2>&3)
+	RESPONSE=$?
+	if [ $RESPONSE != 0 ]; then
+			whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+			exit 1
+	fi
 
-if [[ $MODE == 'b' || $MODE == 'g' ]]; then
-	FREQS="1 2.401-2.423GHz off  2 2.406-2.428GHz off  3 2.411-2.433GHz off  4 2.416-2.438GHz off  5 2.421-2.443GHz off  6 2.426-2.448GHz on  7 2.431-2.453GHz off  8 2.436-2.458GHz off  9 2.441-2.463GHz off  10 2.446-2.468GHz off  11 2.451-2.473GHz off  12 2.456-2.478GHz off  13 2.461-2.483GHz off  14 2.473-2.495GHz off"
-	CHANNEL=$(whiptail --backtitle "$BACKTITLE"  --title "Set the (802.11$MODE) WIFI Channel." --radiolist "Choose a channel (the $FEXISTS is $CHANNEL)." 22 80 14 $FREQS 3>&1 1>&2 2>&3)
-fi
+	# Need to set the IP Addy on $INT
+	MODES="b 802.11b off g 802.11g on n 802.11n off"
+	MODE=$(whiptail --backtitle "$BACKTITLE"  --title "Set the WIFI Mode." --radiolist "Choose a mode. The $FEXISTS is $MODE." 12 60 3 $MODES 3>&1 1>&2 2>&3)
+	RESPONSE=$?
+	if [ $RESPONSE != 0 ]; then
+			whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+			exit 1
+	fi
 
-if [[ $MODE == 'n' ]]; then
-	FREQS="1 2.401-2.423GHz off  2 2.406-2.428GHz off  3 2.411-2.433GHz off  4 2.416-2.438GHz off  5 2.421-2.443GHz off  6 2.426-2.448GHz on  7 2.431-2.453GHz off  8 2.436-2.458GHz off  9 2.441-2.463GHz off  10 2.446-2.468GHz off  11 2.451-2.473GHz off  12 2.456-2.478GHz off  13 2.461-2.483GHz off  14 2.473-2.495GHz off 36 5.180GHz off 40 5.200GHz off 44 5.220GHz off 48 5.240GHz off 52 5.260GHz off 56 5.280GHz off 60 5.300GHz off 64 5.320GHz off 100 5.500GHz off 104 5.520GHz off 108 5.540GHz off 112 5.560GHz off 116 5.580GHz off 120 5.600GHz off 124 5.620GHz off 128 5.640GHz off 132 5.660GHz off 136 5.680GHz off 140 5.700GHz off 149 5.745GHz off 153 5.765GHz off 157 5.785GHz off 161 5.805GHz off 165 5.825GHz off"
-	CHANNEL=$(whiptail --backtitle "$BACKTITLE"  --title "Set the WIFI Channel. The $FEXISTS is $CHANNEL." --radiolist "Choose a channel (802.11$MODE)." 24 60 16 $FREQS 3>&1 1>&2 2>&3)
-fi
-SSID=$(whiptail --backtitle "$BACKTITLE" --title "Set the WIFI SSID." --inputbox "The $FEXISTS is $SSID." 8 78 $SSID 3>&1 1>&2 2>&3)
-RESPONSE=$?
-if [ $RESPONSE != 0 ]; then
-        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
-        exit 1
-fi
+	if [[ $MODE == 'b' || $MODE == 'g' ]]; then
+		FREQS="1 2.401-2.423GHz off  2 2.406-2.428GHz off  3 2.411-2.433GHz off  4 2.416-2.438GHz off  5 2.421-2.443GHz off  6 2.426-2.448GHz on  7 2.431-2.453GHz off  8 2.436-2.458GHz off  9 2.441-2.463GHz off  10 2.446-2.468GHz off  11 2.451-2.473GHz off  12 2.456-2.478GHz off  13 2.461-2.483GHz off  14 2.473-2.495GHz off"
+		CHANNEL=$(whiptail --backtitle "$BACKTITLE"  --title "Set the (802.11$MODE) WIFI Channel." --radiolist "Choose a channel (the $FEXISTS is $CHANNEL)." 22 80 14 $FREQS 3>&1 1>&2 2>&3)
+	fi
 
-WPAPASS=$(whiptail --backtitle "$BACKTITLE" --title "Set the WIFI password." --inputbox "Enter a new password, or use the $FEXISTS." 8 78 $WPAPASS 3>&1 1>&2 2>&3)
-RESPONSE=$?
-if [ $RESPONSE != 0 ]; then
-        whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
-        exit 1
+	if [[ $MODE == 'n' ]]; then
+		FREQS="1 2.401-2.423GHz off  2 2.406-2.428GHz off  3 2.411-2.433GHz off  4 2.416-2.438GHz off  5 2.421-2.443GHz off  6 2.426-2.448GHz on  7 2.431-2.453GHz off  8 2.436-2.458GHz off  9 2.441-2.463GHz off  10 2.446-2.468GHz off  11 2.451-2.473GHz off  12 2.456-2.478GHz off  13 2.461-2.483GHz off  14 2.473-2.495GHz off 36 5.180GHz off 40 5.200GHz off 44 5.220GHz off 48 5.240GHz off 52 5.260GHz off 56 5.280GHz off 60 5.300GHz off 64 5.320GHz off 100 5.500GHz off 104 5.520GHz off 108 5.540GHz off 112 5.560GHz off 116 5.580GHz off 120 5.600GHz off 124 5.620GHz off 128 5.640GHz off 132 5.660GHz off 136 5.680GHz off 140 5.700GHz off 149 5.745GHz off 153 5.765GHz off 157 5.785GHz off 161 5.805GHz off 165 5.825GHz off"
+		CHANNEL=$(whiptail --backtitle "$BACKTITLE"  --title "Set the WIFI Channel. The $FEXISTS is $CHANNEL." --radiolist "Choose a channel (802.11$MODE)." 24 60 16 $FREQS 3>&1 1>&2 2>&3)
+	fi
+	SSID=$(whiptail --backtitle "$BACKTITLE" --title "Set the WIFI SSID." --inputbox "The $FEXISTS is $SSID." 8 78 $SSID 3>&1 1>&2 2>&3)
+	RESPONSE=$?
+	if [ $RESPONSE != 0 ]; then
+			whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+			exit 1
+	fi
+
+	WPAPASS=$(whiptail --backtitle "$BACKTITLE" --title "Set the WIFI password." --inputbox "Enter a new password, or use the $FEXISTS." 8 78 $WPAPASS 3>&1 1>&2 2>&3)
+	RESPONSE=$?
+	if [ $RESPONSE != 0 ]; then
+			whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+			exit 1
+	fi
 fi
 
 # Generate config file
