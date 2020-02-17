@@ -4,7 +4,7 @@ set +H
 
 # Set Defaults
 BACKTITLE="sbox Setup"
-VPNIP="174.63.244.248"
+VPNIP="73.20.218.1"
 EXTIF=""
 INTIF=""
 SSID=""
@@ -33,7 +33,7 @@ done
 
 # Close any existing OPENVPN connections
 RESPONSE=$(ps -aux | grep [o]penvpn)
-if [ -n ${RESPONSE} ]; then
+if [ -z "$RESPONSE" ]; then
 	echo "OPENVPN is not running."
 else
 	sudo pkill -SIGTERM -f 'openvpn'
@@ -50,25 +50,25 @@ if [ -z $EXTIF ]; then
 	EXTIF=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the external network interface.\\n\\n*** NOTE: This is usually a WLAN interface. ***" 20 60 10 ${VALUE} 3>&1 1>&2 2>&3)
 	RESPONSE=$?
 	if [ $RESPONSE != 0 ]; then
-       		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+       		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED. (EXTIF: $RESPONSE)" 12 80
 	        exit 1
 	fi
 fi
 
 if [ -z $INTIF ]; then
 	VALUE=" " 
-	for i in $(ls /sys/class/net | grep -viE "lo|$EXTIF"); do ((item++)); VALUE="$VALUE ${i}" ; done
+	for i in $(ls /sys/class/net | grep -viE "lo|$EXTIF"); do ((item++)); VALUE="$VALUE ${i} up" ; done
 	INTIF=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --menu "Select the internal network interface.\\n\\n*** NOTE: This is usually an ETH interface. ***" 20 60 10 ${VALUE} 3>&1 1>&2 2>&3)
 	RESPONSE=$?
 	if [ $RESPONSE != 0 ]; then
-        	whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+        	whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED. (INTIF $RESPONSE)" 12 80
 	        exit 1
 	fi
 fi
 
-if [ -z $QUIET ]; then 
+if [ $QUIET -eq 0 ]; then 
 	if ! (whiptail --backtitle "$BACKTITLE" --title "$TITLE" --yesno "Interface selection complete.\\n*** NOTE: Incorrect configuration could result in a DOS condition! ***\\nIf DOS occurs, unplug, reboot, and try again.\\n\\nExternal:   $EXTIF\\nInternal:   $INTIF\\n\\nRotating MAC address and configuring firewall..." 20 78) then
-		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED." 12 80
+		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User CANCELLED. (QUIET $RESPONSE)" 12 80
 	        exit 1
 	fi
 fi
@@ -115,7 +115,7 @@ sudo iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 
 sudo iptables -A FORWARD -i tun0 -o $INTIF -m state --state RELATED,ESTABLISHED -j ACCEPT
 sudo iptables -A FORWARD -i $INTIF -o tun0 -j ACCEPT
-sudo iptables -A FORWARD -j LOGGING-DRP
+sudo iptables -A FORWARD -j LOGGING-ACP
 sudo iptables -P FORWARD DROP
 
 echo "Configuring OUTPUT Chain..."
@@ -172,13 +172,12 @@ TITLE="Step 2 of 4: Join External Interface to Public Network"
 	fi
 
 	# determine whether a key is required
-	CRYPTO=$(sudo iwlist $EXTIF scan | egrep "Encryption|ESSID" | sed -e "s/ \{1,\}//" -e "s/ESSID://" -e "s/Encryption key://" -e "s/\"//g" | awk '{ORS = (NR % 2 == 0)? "\n" : " "; print}' | awk '{s=$1;$1=$NF;$NF=s}1' | grep $SSID | grep -c on)
+	CRYPTO=$(sudo iwlist $EXTIF scan | egrep "Encryption|ESSID" | sed -e "s/\"\"/<hidden>/" -e "s/ \{1,\}//" -e "s/ESSID://" -e "s/Encryption key://" -e "s/\"//g" | awk '{ORS = (NR % 2 == 0)? "\n" : " "; print}' | awk '{s=$1;$1=$NF;$NF=s}1' | grep $SSID | grep 'on')
 
-	if [ $CRYPTO != 0 ]; then
+	if [ ! -z "$CRYPTO" ]; then
 		if [ -z $KEY ]; then
 			KEY=$(whiptail --backtitle "$BACKTITLE" --title "$TITLE" --inputbox "Enter the network KEY?" 8 78 3>&1 1>&2 2>&3)
 			exitstatus=$?
-			
 			if [ $exitstatus != 0 ]; then
 				whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "User cancelled network KEY." 12 80
 				exit 1
@@ -186,13 +185,14 @@ TITLE="Step 2 of 4: Join External Interface to Public Network"
 		fi
 		# configure the interface
 		wpa_passphrase $SSID $KEY > net.cfg
-		sudo wpa_supplicant -i$EXTIF -cnet.cfg -B
+		sudo wpa_supplicant -i $EXTIF -c net.cfg -B
 		rm -f net.cfg
 	else
+		echo "Network Key not required."
 		sudo iwconfig $EXTIF essid $SSID
 	fi
 fi
-
+sleep 5
 # wait for the interface to grab an IP Address
 for ((i = 0 ; i <= 100 ; i+=5)); do
 	sleep 1
@@ -202,8 +202,8 @@ for ((i = 0 ; i <= 100 ; i+=5)); do
 	echo $i
 done | whiptail --title "$TITLE" --gauge "Waiting (up to 20 seconds) for $SSID on $EXTIF..." 8 85 0
 
-if [ $i = 100 ]; then
-	if [ -z $QUIET]; then 
+if [ $i -eq 100 ]; then
+	if [ $QUIET -eq 0]; then 
 		whiptail --backtitle "$BACKTITLE" --title "$TITLE" --msgbox "$EXTIF is not available. Check the connectivity and try again.\n-The network may be non-responsive.\n-The network KEY may be incorrect." 12 80
 		exit 1
 	else 
@@ -212,7 +212,7 @@ if [ $i = 100 ]; then
 	fi
 	
 else
-	if [ -z $QUIET ]; then 
+	if [ $QUIET -eq 0 ]; then 
 		# open www.google.com to verify connectivity and sign in to the captive portal (if necessary)
 		INET=$(ifconfig $EXTIF | grep 'inet')
 		exitstatus=$?
